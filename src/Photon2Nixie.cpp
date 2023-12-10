@@ -119,7 +119,7 @@ void do_display_time() {
     lastTime = timebuf[1];
   }
   
-  if ((timebuf[0] == '5') && (timebuf[1] == '9'))
+  if ((timebuf[0] == '0') && (timebuf[1] == '1'))
   {
     enter_date_display();
   }
@@ -136,7 +136,7 @@ void do_slot_machine() {
     slot_minor_counter = 0;
     ++slot_major_counter;
   }
-  if (2 < slot_major_counter && Time.isValid()) {
+  if (3 < slot_major_counter && Time.isValid()) {
     lastTime = -1;
     the_state = STATE_DISPLAY_TIME;
   } else {
@@ -150,7 +150,7 @@ void do_display_date() {
   SPI.transfer(spibuf, NULL, 4, spi_send_finish);
 
   ++date_minor_counter;
-  if (date_minor_counter >= 80) {
+  if (date_minor_counter >= 40) {
     enter_slot_machine();
   }
   delay(80);
