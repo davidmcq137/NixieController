@@ -17,7 +17,7 @@ SYSTEM_THREAD(ENABLED);
 
 // Show system, cloud connectivity, and application logs over USB
 // View logs with CLI using 'particle serial monitor --follow'
-SerialLogHandler logHandler(LOG_LEVEL_INFO);
+//SerialLogHandler logHandler(LOG_LEVEL_INFO);
 
 unsigned counter;
 char timebuf[7];
@@ -36,16 +36,17 @@ void setup() {
   lastTime = -1;
   
   // Put initialization like pinMode and begin functions here
-  SPI.begin(SPI_MODE_MASTER, S3);
+  SPI.begin(SPI_MODE_MASTER, A5);
   SPI.setClockDivider(SPI_CLOCK_DIV256);
   SPI.setDataMode(SPI_MODE0);
   SPI.setBitOrder(MSBFIRST);
 
-  pinMode(D0, OUTPUT);
-  digitalWrite(D0, LOW);
-
-  pinMode(D1, OUTPUT);
-  analogWrite(D1, 255, 200);
+// this is the FFStr (strobe) signal
+  pinMode(D6, OUTPUT);
+  digitalWrite(D6, LOW);
+//this is the PWM signal for brightness control
+  pinMode(D7, OUTPUT);
+  analogWrite(D7, 255, 200);
 
   Time.zone(-5);
 }
@@ -89,8 +90,8 @@ void packbuf(const char *ds) {
 }
 
 void spi_send_finish() {
-  digitalWrite(D0, HIGH);
-  digitalWrite(D0, LOW);
+  digitalWrite(D6, HIGH);
+  digitalWrite(D6, LOW);
 }
 
 

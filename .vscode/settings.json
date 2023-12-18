@@ -4,8 +4,8 @@
     "files.associations": {
         "*.ino": "cpp"
     },
-    "particle.firmwareVersion": "5.5.0",
-    "particle.targetDevice": "Dalibor",
-    "particle.targetPlatform": "p2",
-    "C_Cpp.errorSquiggles": "Enabled"
+    "particle.firmwareVersion": "5.6.0",
+    "particle.targetPlatform": "argon",
+    "C_Cpp.errorSquiggles": "Enabled",
+    "particle.targetDevice": "medido_one"
 }
