@@ -10,6 +10,7 @@
 #include "Particle.h"
 #include "RTClibrary.h"
 
+
 // Let Device OS manage the connection to the Particle Cloud
 SYSTEM_MODE(AUTOMATIC);
 
@@ -32,6 +33,7 @@ int lastTime;
 
 unsigned long lastSync = millis();
 RTC_DS3231 rtc;
+
 time32_t unixTime;
 DateTime now;
 bool rtcValid;
@@ -49,7 +51,6 @@ my_state_t the_state;
 void setup() {
   Serial.begin();
   waitFor(Serial.isConnected, 1000);
-
 
   counter = 0;
   lastTime = -1;
@@ -69,9 +70,8 @@ void setup() {
 
   //Still need this even with RTC since particle OS won't give Time.isValid() until TZ set
   Time.zone(-5);
-  //Serial.println("Time zone set to -5 from UTC");
 
-  // rtc.begin() always returns true, even if no rtc device. heaven knows why
+  // rtc.begin() always returns true, even if no rtc device. heaven knows why.
   // so check manually by talking directly to the i2c bus if it's there  
   // at the expected address
 
@@ -85,7 +85,7 @@ void setup() {
     rtcAvailable = false;
   }
   Serial.printlnf("rtcAvailable %d", rtcAvailable);
-  Wire.end();
+  Wire.end(); // close bus connection, rtc lib will reopen
 
   rtc.begin();
   
@@ -102,9 +102,8 @@ void setup() {
     the_state = STATE_SLOT_MACHINE;
   }
 
+  
 }
-
-
 
 int writetime() {
   if (rtcValid) {
