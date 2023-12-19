@@ -28,6 +28,8 @@ int lastTime;
 
 
 #define ONE_DAY_MILLIS (24 * 60 * 60 * 1000)
+#define DS3231Addr 0x68;
+
 unsigned long lastSync = millis();
 RTC_DS3231 rtc;
 time32_t unixTime;
@@ -47,6 +49,7 @@ my_state_t the_state;
 void setup() {
   Serial.begin();
   waitFor(Serial.isConnected, 1000);
+
 
   counter = 0;
   lastTime = -1;
@@ -68,16 +71,29 @@ void setup() {
   Time.zone(-5);
   //Serial.println("Time zone set to -5 from UTC");
 
-  rtcAvailable = rtc.begin();
-  Serial.printlnf("rtc.begin returns %d", rtcAvailable);  
+  // rtc.begin() always returns true, even if no rtc device. heaven knows why
+  // so check manually by talking directly to the i2c bus if it's there  
+  // at the expected address
 
-  //Serial.printlnf("readSqw %d", rtc.readSqwPinMode());
-  //For whatever reason, rtc.begin will return true even if no RTC module
-  //is physically connected to the i2c bus. 
-  //so for now this is not reliable and will cause issues when no
-  //rtc exists..
+  Wire.begin();
+  Wire.beginTransmission(DS3231_ADDRESS);
+  int8_t bb = Wire.endTransmission();
+  Serial.printlnf("endTransmission code %d", bb);
+  if ( (bb == 0) || (bb == 5)) { // succeeded (0) or succeeded then busy (5)
+    rtcAvailable = true;
+  } else {
+    rtcAvailable = false;
+  }
+  Serial.printlnf("rtcAvailable %d", rtcAvailable);
+  Wire.end();
 
-  rtcValid = !rtc.lostPower();
+  rtc.begin();
+  
+  if (rtcAvailable) {
+    rtcValid = !rtc.lostPower();
+  } else {
+    rtcValid = false;
+  }
   Serial.printlnf("rtcValid %d", rtcValid);
 
   if (rtcValid) {
