@@ -5,7 +5,7 @@
         "*.ino": "cpp"
     },
     "particle.firmwareVersion": "5.6.0",
-    "particle.targetPlatform": "argon",
+    "particle.targetPlatform": "p2",
     "C_Cpp.errorSquiggles": "Enabled",
-    "particle.targetDevice": "medido_one"
+    "particle.targetDevice": "Farny2"
 }
