@@ -146,7 +146,7 @@ int writedate() {
 
 int writetemp() {
   //return snprintf(tempbuf, 7, "%02d%02d%02d", temp, 0, hum);
-  return snprintf(tempbuf, 7, "%02d%02d%02d", hum % 100, 00, temp % 100);  
+  return snprintf(tempbuf, 7, "%02d%02d%02d", hum % 100, (spidelta / 10000) % 100, temp % 100);  
 }
 
 void packbuf(const char *ds) {
@@ -231,12 +231,13 @@ void do_display_time() {
     #define DIGITFADE ON
     #ifdef DIGITFADE
     
-    // outloop with FADELEVELS * FADEMULT controls how long the fade takes
+    // outer loop with FADELEVELS * FADEMULT controls how long the fade takes
     // currently around 200msec .. this seems like a good compromise
-    // the fade steps thru FADELEVELS of "pseudo PWM" mixing the old and new time
+    // the fade steps thru FADELEVELS of "pseudo PWM" mixing the old and new timed
+    // during the total time of the outer loop.
 
-    #define FADELEVELS 20
-    #define FADEMULT 10
+    #define FADELEVELS 14
+    #define FADEMULT 14
 
     spistart = micros();
     for (int i=0; i < FADELEVELS * FADEMULT; i++){
@@ -253,7 +254,7 @@ void do_display_time() {
     #endif
   
     SPI.transfer(spibuf, NULL, 4, spi_send_finish);
-    Serial.printlnf("Time %s Packed %x %x %x Looptime %.1f spidelta %d", timebuf, spibuf[0], spibuf[1], spibuf[2], loopTime, spidelta);
+    Serial.printlnf("Time %s Packed %x %x %x Looptime %.1f spidelta %d %d", timebuf, spibuf[0], spibuf[1], spibuf[2], loopTime, spidelta, (spidelta/10000) % 100);
     lastTime = timebuf[1];
     for (int i=0; i < 6; i++){
       timebuflast[i] = timebuf[i]; 
