@@ -202,15 +202,16 @@ void enter_temp_display() {
 }
 
 void do_display_time() {
+  writetime(); 
+  
   if ((timebuf[0] == '0') && (timebuf[1] == '1'))
   {
+    Serial.println("timebuf 0/1");
     temp = (9.0/5.0) * Si7021.readTemperature() + 32.0;
     hum = Si7021.readHumidity();
     enter_date_display();
     return; // don't display the :01 time
   }
-
-  writetime(); 
   
   char spilast[4];
 
