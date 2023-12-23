@@ -237,8 +237,10 @@ void do_display_time() {
     // the fade steps thru FADELEVELS of "pseudo PWM" mixing the old and new timed
     // during the total time of the outer loop.
 
-    #define FADELEVELS 14
-    #define FADEMULT 14
+    #define FADELEVELS 16
+    #define FADEMULT 8
+
+    // limit FADELEVELS * FADEMULT to < 300 (ish to keep the outer loop below 1s)
 
     spistart = micros();
     for (int i=0; i < FADELEVELS * FADEMULT; i++){
