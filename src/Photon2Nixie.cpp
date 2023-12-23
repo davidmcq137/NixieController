@@ -56,6 +56,8 @@ float lastLoop = -1.0;
 unsigned long spistart;
 unsigned long spiend;
 int spidelta = 0;
+bool fadeDigits = true;
+int offsetFromGMT = -5;
 
 typedef enum {
   STATE_DISPLAY_TIME,
@@ -65,6 +67,25 @@ typedef enum {
 } my_state_t;
 
 my_state_t the_state;
+
+const size_t UART_TX_BUF_SIZE = 20;
+void onDataReceived(const uint8_t *data, size_t len, const BlePeerDevice &peer, void *context);
+void execKwd(String k, String v);
+void execCmd(String k, String v);
+
+String textacc;
+
+// These UUIDs were defined by Nordic Semiconductor and are now the defacto standard for
+// UART-like services over BLE. Many apps support the UUIDs now, like the Adafruit Bluefruit app.
+
+const BleUuid serviceUuid("6E400001-B5A3-F393-E0A9-E50E24DCCA9E");
+const BleUuid rxUuid("6E400002-B5A3-F393-E0A9-E50E24DCCA9E");
+const BleUuid txUuid("6E400003-B5A3-F393-E0A9-E50E24DCCA9E");
+
+BleCharacteristic txCharacteristic("tx", BleCharacteristicProperty::NOTIFY, txUuid, serviceUuid);
+//BleCharacteristic rxCharacteristic("rx", BleCharacteristicProperty::WRITE_WO_RSP, rxUuid, serviceUuid, onDataReceived, NULL);
+BleCharacteristic rxCharacteristic("rx", BleCharacteristicProperty::WRITE, rxUuid, serviceUuid, onDataReceived, NULL);
+//2
 
 // setup() runs once, when the device is first turned on
 void setup() {
@@ -89,7 +110,7 @@ void setup() {
   analogWrite(A2, dutyCycle, PWMFREQ);
 
   //Still need this even with RTC since particle OS won't give Time.isValid() until TZ set
-  Time.zone(-5);
+  Time.zone(offsetFromGMT);
 
   // rtc.begin() always returns true, even if no rtc device. heaven knows why.
   // so check manually by talking directly to the i2c bus if it's there  
@@ -123,7 +144,167 @@ void setup() {
     the_state = STATE_SLOT_MACHINE;
   }
 
+  // Start the i2c temp and humidity sensor
   Si7021.begin();  
+
+  // Start the Bluetooth service and begin advertising
+
+  BLE.setDeviceName("Nixie Clock");
+  BLE.on();
+  BLE.addCharacteristic(txCharacteristic);
+  BLE.addCharacteristic(rxCharacteristic);
+  BleAdvertisingData data;
+  data.appendServiceUUID(serviceUuid);
+  BLE.advertise(&data);
+  
+}
+
+void onLinefeed(String msg)
+{
+  int lparen;
+  int rparen;
+  int colon;
+  String key;
+  String val;
+  bool isKwd = false;
+
+  lparen = msg.indexOf("(");
+  if (lparen < 0)
+  {
+    isKwd = true;
+    rparen = msg.length() - 1;
+  }
+  else
+  {
+    rparen = msg.indexOf(")");
+  }
+  colon = msg.lastIndexOf(":");
+  
+  if (colon < 0)
+  {
+    key = msg.substring(lparen + 1, rparen);
+    val = "";
+  }
+  else
+  {
+    key = msg.substring(lparen + 1, colon);
+    val = msg.substring(colon + 1, rparen);
+  }
+
+  textacc = "";
+
+  if (isKwd)
+  {
+    execKwd(key, val);
+  }
+  else
+  {
+    execCmd(key, val);
+  }
+}
+
+//7
+void onDataReceived(const uint8_t *data, size_t len, const BlePeerDevice &peer, void *context) {
+  //Log.trace("Received data from: %02X:%02X:%02X:%02X:%02X:%02X:", peer.address()[0], peer.address()[1], peer.address()[2], peer.address()[3], peer.address()[4], peer.address()[5]);
+  //Serial.print(len);
+  //Serial.println("in onDataReceived");
+
+  for (size_t ii = 0; ii < len; ii++)
+  {
+    textacc.concat(char(data[ii]));
+    if (data[ii] == '\n')
+    {
+      onLinefeed(textacc.c_str());
+    }
+  }
+}
+
+void sendSPI(String str, float val)
+{
+  {
+    size_t nch;
+    char buf[20];
+    uint8_t txbuf[20];
+
+    nch = sprintf(buf, "(" + str + ":%4.2f)", val);
+    for (size_t ii = 0; ii < nch; ii++)
+    {
+      txbuf[ii] = (int)buf[ii];
+    }
+    txCharacteristic.setValue(txbuf, nch);
+  }
+}
+
+String wifissid = "";
+String wifipwd = "";
+
+void execKwd(String k, String v)
+{
+  String tmp = "";
+
+  Serial.printlnf("execKwd: k,v = #%s#,#%s#", k.c_str(), v.c_str());
+  
+  if (k == "PWM") {
+    int setPWM = v.toInt();
+    if (setPWM > 255) {
+      setPWM = 255;
+    } 
+    if (setPWM < 0) {
+      setPWM = 0;
+    }
+    Serial.printlnf("PWM command %d", (int)setPWM);
+    analogWrite(A2, (int)setPWM, PWMFREQ);
+  } else if (k == "Fade") {
+    if (v == "ON") {
+      fadeDigits = true;
+      sendSPI("Fade ON", 0);
+    } else {
+      sendSPI("Fade OFF", 0);
+      fadeDigits = false;
+    }
+  } else if (k == "ssid")
+  {
+    wifissid.concat(v);
+  }
+  else if (k == "pwd")
+  {
+    wifipwd.concat(v);
+  }
+  else if (k == "update")
+  {
+    WiFi.clearCredentials();
+    WiFi.setCredentials(wifissid, wifipwd);
+    WiFi.on();
+    WiFi.connect();
+
+    int wLoops = 0;
+    while (!WiFi.ready() && wLoops < 300){ //timeout 30 seconds if no wifi or bad creds
+      delay(100);
+      wLoops = wLoops + 1;
+    }
+    if (wLoops >= 300) {
+      sendSPI("No WiFi Conn", -1); //No WiFi connection
+      return;
+    }
+    sendSPI("WiFi connected", 2); // WiFi connected
+    Particle.connect();
+    wLoops = 0;
+    while (!Particle.connected() && wLoops < 300)
+    {
+      delay(100);
+      wLoops = wLoops + 1;
+    }
+    if (wLoops >= 300) {
+      sendSPI("No Cloud Conn", -30); // No Particle Cloud Connection 
+      return;
+    }
+    sendSPI("Cloud Connected", 30); // particle cloud connected
+  }
+}
+
+void execCmd(String k, String v)
+{
+  Serial.printlnf("execCmd: k,v = %s,%s", k.c_str(), v.c_str());
 }
 
 int writetime() {
@@ -229,9 +410,6 @@ void do_display_time() {
 
     packbuf(timebuf);
     
-    #define DIGITFADE ON
-    #ifdef DIGITFADE
-    
     // outer loop with FADELEVELS * FADEMULT controls how long the fade takes
     // currently around 200msec .. this seems like a good compromise
     // the fade steps thru FADELEVELS of "pseudo PWM" mixing the old and new timed
@@ -242,20 +420,23 @@ void do_display_time() {
 
     // limit FADELEVELS * FADEMULT to < 300 (ish to keep the outer loop below 1s)
 
-    spistart = micros();
-    for (int i=0; i < FADELEVELS * FADEMULT; i++){
-      for(int k=0; k < FADELEVELS; k++){
-        if (k * FADEMULT < i){
-          SPI.transfer(spibuf, NULL, 4, spi_send_finish);           
-        } else {
-          SPI.transfer(spilast, NULL, 4, spi_send_finish);           
+    if (fadeDigits) {
+      spistart = micros();
+      for (int i=0; i < FADELEVELS * FADEMULT; i++){
+        for(int k=0; k < FADELEVELS; k++){
+          if (k * FADEMULT < i){
+            SPI.transfer(spibuf, NULL, 4, spi_send_finish);           
+          } else {
+            SPI.transfer(spilast, NULL, 4, spi_send_finish);           
+          }
         }
       }
+      spiend = micros();
+      spidelta = (int)(spiend - spistart);
+    } else {
+      spidelta = 0;
     }
-    spiend = micros();
-    spidelta = (int)(spiend - spistart);
-    #endif
-  
+
     SPI.transfer(spibuf, NULL, 4, spi_send_finish);
     Serial.printlnf("Time %s Packed %x %x %x Looptime %.1f spidelta %d %d", timebuf, spibuf[0], spibuf[1], spibuf[2], loopTime, spidelta, (spidelta/10000) % 100);
     lastTime = timebuf[1];
@@ -270,7 +451,7 @@ void do_slot_machine() {
   // synch to system/cloud time each minute when the slot machine starts
   if (Time.isValid() &&  rtcAvailable && (slot_minor_counter == 0) && (slot_major_counter == 0) ) {
     unixTime = Time.now();
-    rtc.adjust(unixTime - 5*60*60); //Time zone adj goes here
+    rtc.adjust(unixTime + offsetFromGMT * 60 * 60); //Time zone adj goes here
     Serial.printlnf("Doing rtc.adjust");    
     rtcValid = true;
   }
@@ -284,8 +465,7 @@ void do_slot_machine() {
     ++slot_major_counter;
     Serial.printlnf("Slot %d", slot_major_counter);
   }
-  //if (3 < slot_major_counter && Time.isValid()) {
-  //Serial.printlnf("maj, rtcValid, Time.isValid() %d %d %d", slot_major_counter, rtcValid, Time.isValid());
+  
   if (3 < slot_major_counter && (rtcValid || Time.isValid())) {    
     lastTime = -1;
     the_state = STATE_DISPLAY_TIME;
@@ -353,11 +533,12 @@ void loop() {
     case STATE_DISPLAY_TEMP: do_display_temp(); break;    
   }
   checkEnc();
+
   if (the_state == STATE_DISPLAY_TIME) {
     float dt = (float)(micros() - lastmicro);
     if (lastLoop < 0.0) {
       loopTime = dt;
-      Serial.println("Foo");
+      //Serial.println("Foo");
     } else {
       loopTime = dt;
     }
