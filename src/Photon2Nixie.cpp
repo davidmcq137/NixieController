@@ -22,7 +22,7 @@ SYSTEM_THREAD(ENABLED);
 
 // Show system, cloud connectivity, and application logs over USB
 // View logs with CLI using 'particle serial monitor --follow'
-//SerialLogHandler logHandler(LOG_LEVEL_INFO);
+SerialLogHandler logHandler(LOG_LEVEL_INFO);
 
 unsigned counter;
 char timebuf[7];
@@ -41,6 +41,8 @@ unsigned long lastSync = millis();
 RTC_DS3231 rtc;
 Adafruit_Si7021 Si7021;
 Encoder Enc(A5, S4);
+
+// RTC lib docs: https://adafruit.github.io/RTClib/html/index.html
 
 time32_t unixTime;
 DateTime now;
@@ -156,7 +158,6 @@ void setup() {
   BleAdvertisingData data;
   data.appendServiceUUID(serviceUuid);
   BLE.advertise(&data);
-  
 }
 
 void onLinefeed(String msg)
@@ -223,10 +224,11 @@ void sendSPI(String str, float val)
 {
   {
     size_t nch;
-    char buf[20];
-    uint8_t txbuf[20];
+    char buf[200];
+    uint8_t txbuf[200];
 
     nch = sprintf(buf, "(" + str + ":%4.2f)", val);
+    Serial.printlnf ("nch %d", nch);
     for (size_t ii = 0; ii < nch; ii++)
     {
       txbuf[ii] = (int)buf[ii];
@@ -252,6 +254,7 @@ void execKwd(String k, String v)
     if (setPWM < 0) {
       setPWM = 0;
     }
+    sendSPI("Set PWM", float(setPWM));
     Serial.printlnf("PWM command %d", (int)setPWM);
     analogWrite(A2, (int)setPWM, PWMFREQ);
   } else if (k == "Fade") {
@@ -264,14 +267,30 @@ void execKwd(String k, String v)
     }
   } else if (k == "ssid")
   {
-    wifissid.concat(v);
+    wifissid = v;
+    sendSPI(wifissid, 0.0);
+    //wifissid.concat(v);
   }
   else if (k == "pwd")
   {
-    wifipwd.concat(v);
+    wifipwd = v;
+    sendSPI(wifipwd, 0.0);
+    //wifipwd.concat(v);
   }
   else if (k == "update")
   {
+    bool saveFade = fadeDigits;
+    fadeDigits = false;
+    Serial.println("Getting ready to update");
+    Serial.printlnf("ssid, pwd %s %s", wifissid.c_str(), wifipwd.c_str() );
+    delay(1000);
+    Serial.println("about to sendSPI");
+    delay(1000);
+    //sendSPI(String("Setting wifi creds"), 0.0);
+    delay(1000);
+    Serial.println("Past sendSPI");
+    Serial.printlnf("ssid, pwd %s %s", wifissid.c_str(), wifipwd.c_str() );
+    delay(1000);
     WiFi.clearCredentials();
     WiFi.setCredentials(wifissid, wifipwd);
     WiFi.on();
@@ -306,6 +325,7 @@ void execCmd(String k, String v)
 {
   Serial.printlnf("execCmd: k,v = %s,%s", k.c_str(), v.c_str());
 }
+
 
 int writetime() {
   if (rtcValid) {
