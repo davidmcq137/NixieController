@@ -428,7 +428,7 @@ void do_display_time() {
   
   char spilast[4];
 
-  if (timebuf[1] != lastTime) {
+  if (timebuf[1] != lastTime) { //true once a second
     char tb3 = timebuf[3];
     char tb1 = timebuf[1];
     if (countback && (timebuf[1] == '0') && (lastTime == '9')) {
