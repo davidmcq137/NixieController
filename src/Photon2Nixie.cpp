@@ -59,6 +59,7 @@ unsigned long spistart;
 unsigned long spiend;
 int spidelta = 0;
 bool fadeDigits = true;
+bool countback = false;
 int offsetFromGMT = -5;
 
 typedef enum {
@@ -253,13 +254,21 @@ void execKwd(String k, String v)
     sendBLE("Set PWM");
     Serial.printlnf("PWM command %d", (int)setPWM);
     analogWrite(A2, (int)setPWM, PWMFREQ);
-  } else if (k == "Fade") {
-    if (v == "ON") {
+  } else if (k == "fade") {
+    if (v == "on") {
       fadeDigits = true;
-      sendBLE("Fade ON");
+      sendBLE("fade on");
     } else {
-      sendBLE("Fade OFF");
+      sendBLE("fade off");
       fadeDigits = false;
+    }
+  } else if (k == "countback") {
+    if (v == "on") {
+      countback = true;
+      sendBLE("countback on");
+    } else {
+      countback = false;
+      sendBLE("countback off");
     }
   } else if (k == "ssid")
   {
@@ -273,7 +282,17 @@ void execKwd(String k, String v)
     sendBLE(wifipwd);
     //wifipwd.concat(v);
   }
-  else if (k == "update")
+  else if (k == "unixT")
+  {
+    //use Datetime constructor, convert v value to 32 bit int
+    //don't forget to set time zone .. variable offsetFromGMT AND the os API call
+  }
+  else if (k == "ISO8601")
+  {
+    //use Datetime constructor directly on v assumed to be in ISO 8601 format
+    //don't forget to set time zone .. variable offsetFromGMT AND the os API call
+  }
+  else if (k == "updateWiFi")
   {
     bool saveFade = fadeDigits;
     fadeDigits = false;
@@ -311,6 +330,8 @@ void execKwd(String k, String v)
     }
     sendBLE("Cloud Connected"); // particle cloud connected
     fadeDigits = saveFade;
+  } else {
+    sendBLE("Commands are: fade, countback, ssid, pwd, updateWiFi");
   }
 }
 
@@ -318,7 +339,6 @@ void execCmd(String k, String v)
 {
   Serial.printlnf("execCmd: k,v = %s,%s", k.c_str(), v.c_str());
 }
-
 
 int writetime() {
   if (rtcValid) {
@@ -400,7 +420,6 @@ void do_display_time() {
   
   if ((timebuf[0] == '0') && (timebuf[1] == '1'))
   {
-    Serial.println("timebuf 0/1");
     temp = (9.0/5.0) * Si7021.readTemperature() + 32.0;
     hum = Si7021.readHumidity();
     enter_date_display();
@@ -410,6 +429,16 @@ void do_display_time() {
   char spilast[4];
 
   if (timebuf[1] != lastTime) {
+
+    if (countback && (timebuf[1] == '0')) {
+      for(int j=9; j >= 0; j--) {  
+        timebuf[1] = '0' + j;
+        packbuf(timebuf);
+        SPI.transfer(spibuf, NULL, 4, spi_send_finish);
+        Serial.println(timebuf);
+        delay(30);
+      }
+    }
   
     // use packbuf to store the 4-byte SPI string for the last time, save it
     // in spilast[]
