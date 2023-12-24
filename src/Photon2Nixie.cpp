@@ -220,21 +220,17 @@ void onDataReceived(const uint8_t *data, size_t len, const BlePeerDevice &peer, 
   }
 }
 
-void sendSPI(String str, float val)
+void sendBLE(String str)
 {
-  {
-    size_t nch;
-    char buf[200];
-    uint8_t txbuf[200];
+  uint8_t txbuf[200];
+  String buf = str += "\r\n";
+  size_t nch = buf.length() ;
 
-    nch = sprintf(buf, "(" + str + ":%4.2f)", val);
-    Serial.printlnf ("nch %d", nch);
-    for (size_t ii = 0; ii < nch; ii++)
-    {
-      txbuf[ii] = (int)buf[ii];
-    }
-    txCharacteristic.setValue(txbuf, nch);
+  for (size_t ii = 0; (ii < nch) && (ii < 200); ii++)
+  {
+    txbuf[ii] = (int)str.charAt(ii);
   }
+  txCharacteristic.setValue(txbuf, nch);
 }
 
 String wifissid = "";
@@ -254,47 +250,41 @@ void execKwd(String k, String v)
     if (setPWM < 0) {
       setPWM = 0;
     }
-    sendSPI("Set PWM", float(setPWM));
+    sendBLE("Set PWM");
     Serial.printlnf("PWM command %d", (int)setPWM);
     analogWrite(A2, (int)setPWM, PWMFREQ);
   } else if (k == "Fade") {
     if (v == "ON") {
       fadeDigits = true;
-      sendSPI("Fade ON", 0);
+      sendBLE("Fade ON");
     } else {
-      sendSPI("Fade OFF", 0);
+      sendBLE("Fade OFF");
       fadeDigits = false;
     }
   } else if (k == "ssid")
   {
     wifissid = v;
-    sendSPI(wifissid, 0.0);
+    sendBLE(wifissid);
     //wifissid.concat(v);
   }
   else if (k == "pwd")
   {
     wifipwd = v;
-    sendSPI(wifipwd, 0.0);
+    sendBLE(wifipwd);
     //wifipwd.concat(v);
   }
   else if (k == "update")
   {
     bool saveFade = fadeDigits;
     fadeDigits = false;
-    Serial.println("Getting ready to update");
-    Serial.printlnf("ssid, pwd %s %s", wifissid.c_str(), wifipwd.c_str() );
-    delay(1000);
-    Serial.println("about to sendSPI");
-    delay(1000);
-    //sendSPI(String("Setting wifi creds"), 0.0);
-    delay(1000);
-    Serial.println("Past sendSPI");
-    Serial.printlnf("ssid, pwd %s %s", wifissid.c_str(), wifipwd.c_str() );
-    delay(1000);
-    WiFi.clearCredentials();
-    WiFi.setCredentials(wifissid, wifipwd);
-    WiFi.on();
-    WiFi.connect();
+    sendBLE("Setting wifi creds " + wifissid + " " + wifipwd);
+    bool wifiClear = WiFi.clearCredentials();
+    Serial.printlnf("wificlear %d", wifiClear);
+
+    Particle.disconnect();
+    WiFi.setCredentials(wifissid, wifipwd, WPA);
+    WiFi.on();      //prob not required
+    WiFi.connect(); //prob not required since clock runs SYSTEM AUTOMATIC
 
     int wLoops = 0;
     while (!WiFi.ready() && wLoops < 300){ //timeout 30 seconds if no wifi or bad creds
@@ -302,10 +292,11 @@ void execKwd(String k, String v)
       wLoops = wLoops + 1;
     }
     if (wLoops >= 300) {
-      sendSPI("No WiFi Conn", -1); //No WiFi connection
+      sendBLE("No WiFi Connection"); //No WiFi connection
+      fadeDigits = saveFade;
       return;
     }
-    sendSPI("WiFi connected", 2); // WiFi connected
+    sendBLE("WiFi connected"); // WiFi connected
     Particle.connect();
     wLoops = 0;
     while (!Particle.connected() && wLoops < 300)
@@ -314,10 +305,12 @@ void execKwd(String k, String v)
       wLoops = wLoops + 1;
     }
     if (wLoops >= 300) {
-      sendSPI("No Cloud Conn", -30); // No Particle Cloud Connection 
+      sendBLE("No Cloud Connection"); // No Particle Cloud Connection 
+      fadeDigits = saveFade;
       return;
     }
-    sendSPI("Cloud Connected", 30); // particle cloud connected
+    sendBLE("Cloud Connected"); // particle cloud connected
+    fadeDigits = saveFade;
   }
 }
 
