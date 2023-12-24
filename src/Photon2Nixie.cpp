@@ -429,10 +429,14 @@ void do_display_time() {
   char spilast[4];
 
   if (timebuf[1] != lastTime) {
-
-    if (countback && (timebuf[1] == '0')) {
+    char tb3 = timebuf[3];
+    char tb1 = timebuf[1];
+    if (countback && (timebuf[1] == '0') && (lastTime == '9')) {
       for(int j=9; j >= 0; j--) {  
-        timebuf[1] = '0' + j;
+        timebuf[1] = '0' + j;     //secs digit
+        if ((tb3 == '0') && (tb1 == '0') && (timebuflast[3] == '9')) {
+          timebuf[3] = '0' + j;   //mins digit
+        }
         packbuf(timebuf);
         SPI.transfer(spibuf, NULL, 4, spi_send_finish);
         Serial.println(timebuf);
