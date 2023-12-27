@@ -1,7 +1,6 @@
 /* 
- * Project myProject
- * Author: Your Name
- * Date: 
+ * Project: Nixie Clock for Dalibor Farny tubes
+ * Date: Dec 2023
  * For comprehensive documentation and examples, please visit:
  * https://docs.particle.io/firmware/best-practices/firmware-template/
  */
@@ -10,9 +9,8 @@
 #include "Particle.h"
 #include "Encoder.h"
 
-#include "Adafruit_Si7021.h"
+//#include "Adafruit_Si7021.h"
 #include "RTClibrary.h"
-
 
 // Let Device OS manage the connection to the Particle Cloud
 SYSTEM_MODE(AUTOMATIC);
@@ -22,7 +20,7 @@ SYSTEM_THREAD(ENABLED);
 
 // Show system, cloud connectivity, and application logs over USB
 // View logs with CLI using 'particle serial monitor --follow'
-SerialLogHandler logHandler(LOG_LEVEL_INFO);
+//SerialLogHandler logHandler(LOG_LEVEL_INFO);
 
 unsigned counter;
 char timebuf[7];
@@ -36,13 +34,13 @@ int lastTime;
 #define ONE_DAY_MILLIS (24 * 60 * 60 * 1000)
 #define DS3231Addr 0x68
 #define PWMFREQ (200)
+#define EEPROMOFFSET (10)
 
 unsigned long lastSync = millis();
-RTC_DS3231 rtc;
-Adafruit_Si7021 Si7021;
-Encoder Enc(A5, S4);
-
 // RTC lib docs: https://adafruit.github.io/RTClib/html/index.html
+RTC_DS3231 rtc;
+//Adafruit_Si7021 Si7021;
+Encoder Enc(A5, S4);
 
 time32_t unixTime;
 DateTime now;
@@ -58,9 +56,18 @@ float lastLoop = -1.0;
 unsigned long spistart;
 unsigned long spiend;
 int spidelta = 0;
-bool fadeDigits = true;
-bool countback = false;
-int offsetFromGMT = -5;
+
+#define NONVOLVERSION 1
+
+struct EE {
+  uint8_t version;
+  int offsetFromGMT;
+  bool fadeDigits;
+  bool countback;
+  bool dateDisp;
+};
+
+EE nonVol;
 
 typedef enum {
   STATE_DISPLAY_TIME,
@@ -111,10 +118,7 @@ void setup() {
   //this is the PWM signal for brightness control
   pinMode(A2, OUTPUT);
   analogWrite(A2, dutyCycle, PWMFREQ);
-
-  //Still need this even with RTC since particle OS won't give Time.isValid() until TZ set
-  Time.zone(offsetFromGMT);
-
+    
   // rtc.begin() always returns true, even if no rtc device. heaven knows why.
   // so check manually by talking directly to the i2c bus if it's there  
   // at the expected address
@@ -148,7 +152,7 @@ void setup() {
   }
 
   // Start the i2c temp and humidity sensor
-  Si7021.begin();  
+  //Si7021.begin();  
 
   // Start the Bluetooth service and begin advertising
 
@@ -159,6 +163,22 @@ void setup() {
   BleAdvertisingData data;
   data.appendServiceUUID(serviceUuid);
   BLE.advertise(&data);
+
+  EEPROM.get(EEPROMOFFSET, nonVol);
+
+  Serial.printlnf("EEPROM Version %d GMT Offset %d", nonVol.version, nonVol.offsetFromGMT);
+  
+  if (nonVol.version == 255) { //uninitialized EEPROM returns 255 for each byte
+    nonVol.version = 1;
+    nonVol.offsetFromGMT = -5;
+    nonVol.fadeDigits = true;
+    nonVol.countback = false;
+    nonVol.dateDisp = true;
+    Serial.printlnf("setting EEPROM first time, offsetFromGMT %d", nonVol.offsetFromGMT);
+    EEPROM.put(EEPROMOFFSET, nonVol);    
+  } 
+  //Still need this even with RTC since particle OS won't give Time.isValid() until TZ set
+  Time.zone(nonVol.offsetFromGMT);
 }
 
 void onLinefeed(String msg)
@@ -256,22 +276,29 @@ void execKwd(String k, String v)
     analogWrite(A2, (int)setPWM, PWMFREQ);
   } else if (k == "fade") {
     if (v == "on") {
-      fadeDigits = true;
+      nonVol.fadeDigits = true;
       sendBLE("fade on");
     } else {
       sendBLE("fade off");
-      fadeDigits = false;
+      nonVol.fadeDigits = false;
     }
   } else if (k == "countback") {
     if (v == "on") {
-      countback = true;
+      nonVol.countback = true;
       sendBLE("countback on");
     } else {
-      countback = false;
+      nonVol.countback = false;
       sendBLE("countback off");
     }
-  } else if (k == "ssid")
-  {
+  } else if (k == "date") {
+    if (v == "on") {
+      nonVol.dateDisp = true;
+      sendBLE("date disp on");
+    } else {
+      nonVol.dateDisp = false;
+      sendBLE("date disp off");
+    }
+  } else if (k == "ssid") {
     wifissid = v;
     sendBLE(wifissid);
     //wifissid.concat(v);
@@ -281,6 +308,9 @@ void execKwd(String k, String v)
     wifipwd = v;
     sendBLE(wifipwd);
     //wifipwd.concat(v);
+  }
+  else if (k == "clearEE"){
+    EEPROM.clear();
   }
   else if (k == "unixT")
   {
@@ -294,8 +324,8 @@ void execKwd(String k, String v)
   }
   else if (k == "updateWiFi")
   {
-    bool saveFade = fadeDigits;
-    fadeDigits = false;
+    bool saveFade = nonVol.fadeDigits;
+    nonVol.fadeDigits = false;
     sendBLE("Setting wifi creds " + wifissid + " " + wifipwd);
     bool wifiClear = WiFi.clearCredentials();
     Serial.printlnf("wificlear %d", wifiClear);
@@ -312,7 +342,7 @@ void execKwd(String k, String v)
     }
     if (wLoops >= 300) {
       sendBLE("No WiFi Connection"); //No WiFi connection
-      fadeDigits = saveFade;
+      nonVol.fadeDigits = saveFade;
       return;
     }
     sendBLE("WiFi connected"); // WiFi connected
@@ -325,14 +355,17 @@ void execKwd(String k, String v)
     }
     if (wLoops >= 300) {
       sendBLE("No Cloud Connection"); // No Particle Cloud Connection 
-      fadeDigits = saveFade;
+      nonVol.fadeDigits = saveFade;
       return;
     }
     sendBLE("Cloud Connected"); // particle cloud connected
-    fadeDigits = saveFade;
+    nonVol.fadeDigits = saveFade;
   } else {
-    sendBLE("Commands are: fade, countback, ssid, pwd, updateWiFi");
+    sendBLE("Commands are: fade, countback, date, ssid, pwd, updateWiFi");
   }
+  //save into EEPROM
+  EEPROM.put(EEPROMOFFSET, nonVol);
+
 }
 
 void execCmd(String k, String v)
@@ -420,18 +453,23 @@ void do_display_time() {
   
   if ((timebuf[0] == '0') && (timebuf[1] == '1'))
   {
-    temp = (9.0/5.0) * Si7021.readTemperature() + 32.0;
-    hum = Si7021.readHumidity();
-    enter_date_display();
+    //temp = (9.0/5.0) * Si7021.readTemperature() + 32.0;
+    //hum = Si7021.readHumidity();
+    if (nonVol.dateDisp) {
+      enter_date_display();
+    } else {
+      enter_slot_machine();
+    }
+    
     return; // don't display the :01 time
   }
   
   char spilast[4];
-
+  
   if (timebuf[1] != lastTime) { //true once a second
     char tb3 = timebuf[3];
     char tb1 = timebuf[1];
-    if (countback && (timebuf[1] == '0') && (lastTime == '9')) {
+    if (nonVol.countback && (timebuf[1] == '0') && (lastTime == '9')) {
       for(int j=9; j >= 0; j--) {  
         timebuf[1] = '0' + j;     //secs digit
         if ((tb3 == '0') && (tb1 == '0') && (timebuflast[3] == '9')) {
@@ -439,7 +477,7 @@ void do_display_time() {
         }
         packbuf(timebuf);
         SPI.transfer(spibuf, NULL, 4, spi_send_finish);
-        Serial.println(timebuf);
+        //Serial.println(timebuf);
         delay(30);
       }
     }
@@ -451,6 +489,25 @@ void do_display_time() {
     for (int i=0; i < 4; i++) {
       spilast[i] = spibuf[i];
     }
+
+    char spidim[4];
+    char spidimlast[4];
+    char timebufdim[7];
+    char timebuflastdim[7];
+
+    strcpy(timebufdim, timebuf);
+    timebufdim[1] = ':';
+    packbuf(timebufdim); 
+    for (int i=0; i< 4; i++) {
+      spidim[i] = spibuf[i];
+    }
+
+    strcpy(timebuflastdim, timebuflast);
+    timebuflastdim[1] = ':';
+    packbuf(timebuflastdim);  
+    for (int i=0; i < 4; i++){
+      spidimlast[i] = spibuf[i];
+    }
     
     // restore spibuf for current (new) time
 
@@ -461,13 +518,34 @@ void do_display_time() {
     // the fade steps thru FADELEVELS of "pseudo PWM" mixing the old and new timed
     // during the total time of the outer loop.
 
-    #define FADELEVELS 16
-    #define FADEMULT 8
+    #define FADELEVELS 12
+    #define FADEMULT 12
 
     // limit FADELEVELS * FADEMULT to < 300 (ish to keep the outer loop below 1s)
 
-    if (fadeDigits) {
+    if (nonVol.fadeDigits) {
       spistart = micros();
+      for (int i=0; i < FADELEVELS * FADEMULT; i++){
+        for(int k=0; k < FADELEVELS; k++){
+          if ((k * FADEMULT) < i){
+            SPI.transfer(spidimlast, NULL, 4, spi_send_finish);           
+          } else {
+            SPI.transfer(spilast, NULL, 4, spi_send_finish);           
+          }
+        }
+      }
+      
+      for (int i=0; i < FADELEVELS * FADEMULT; i++){
+        for(int k=0; k < FADELEVELS; k++){
+          if ((k * FADEMULT) < i) {
+            SPI.transfer(spibuf, NULL, 4, spi_send_finish);           
+          } else {
+            SPI.transfer(spidim, NULL, 4, spi_send_finish);           
+          }
+        }
+      }
+    
+      /*
       for (int i=0; i < FADELEVELS * FADEMULT; i++){
         for(int k=0; k < FADELEVELS; k++){
           if (k * FADEMULT < i){
@@ -477,6 +555,7 @@ void do_display_time() {
           }
         }
       }
+      */
       spiend = micros();
       spidelta = (int)(spiend - spistart);
     } else {
@@ -497,7 +576,7 @@ void do_slot_machine() {
   // synch to system/cloud time each minute when the slot machine starts
   if (Time.isValid() &&  rtcAvailable && (slot_minor_counter == 0) && (slot_major_counter == 0) ) {
     unixTime = Time.now();
-    rtc.adjust(unixTime + offsetFromGMT * 60 * 60); //Time zone adj goes here
+    rtc.adjust(unixTime + nonVol.offsetFromGMT * 60 * 60); //Time zone adj goes here
     Serial.printlnf("Doing rtc.adjust");    
     rtcValid = true;
   }
@@ -533,11 +612,14 @@ void do_display_date() {
 
   ++date_minor_counter;
   if (date_minor_counter >= 40) {
-    //enter_slot_machine();
-    enter_temp_display();
+    enter_slot_machine();
+    //enter_temp_display();
   }
   delay(80);
 }
+
+//only for debugging if a temp display module included
+//comment out enter_slot_machine() and uncomment enter_temp_display() in do_display_date()
 
 void do_display_temp() {
   if (temp_minor_counter == 0) {
@@ -584,7 +666,6 @@ void loop() {
     float dt = (float)(micros() - lastmicro);
     if (lastLoop < 0.0) {
       loopTime = dt;
-      //Serial.println("Foo");
     } else {
       loopTime = dt;
     }
