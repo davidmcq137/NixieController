@@ -29,6 +29,7 @@ char datebuf[7];
 char tempbuf[7];
 char Htidebuf[7];
 char Ltidebuf[7];
+char slotbuf[] = "000000";
 char spibuf[4];
 int lastTime;
 String tideDay = "0000-00-00";
@@ -93,6 +94,7 @@ typedef enum {
 } my_state_t;
 
 my_state_t the_state;
+my_state_t last_state = STATE_DISPLAY_TIME;
 
 const size_t UART_TX_BUF_SIZE = 20;
 void onDataReceived(const uint8_t *data, size_t len, const BlePeerDevice &peer, void *context);
@@ -564,25 +566,16 @@ void packbuf(const char *ds) {
     spibuf[i / 2] |= ((ds[i] - '0') << ((i % 2) ? 4 : 0));
   }
 
+  strncpy(slotbuf, ds, 7); // note last buf for use in slotmachine
+
   // in rev A board, lower left colon is 0x01, upper left 0x02, lower right is 0x04, upper right is 0x08
-  //if (the_state == STATE_DISPLAY_TIME) {
-    spibuf[3] = colons; //0x0F;  
-  //} else {
-  //  spibuf[3] = 0;
-  //}
+  spibuf[3] = colons; //0x0F;  
 
   //flash colons until cloud connected
 
   if (!Particle.connected() && ( (ds[1] % 2) == 0)) {
     spibuf[3] = 0;
   }
-
-  // for flashing colons .. not needed with seconds tubes changing
-  //if (ds[1] % 2) {
-  //  spibuf[3] = 0;
-  //} else {
-  //  spibuf[3] = 255;
-  //}
 }
 
 void spi_send_finish() {
@@ -606,8 +599,8 @@ void enter_slot_machine() {
     String day = i86time.substring(0,10);
     Serial.printlnf("day, tideDay %s %s", day.c_str(), tideDay.c_str());
     if (tideDay != day) {
-      String data = String(10);
-      Particle.publish("hilo", data, PRIVATE);
+      //String data = String(10);
+      Particle.publish("hilo", NO_ACK); //, data, PRIVATE);
       Serial.printlnf("did Particle.publish") ;
     }
   }
@@ -714,7 +707,7 @@ void do_display_time() {
 
     spidelta = 0;
 
-    if (nonVol.fadeDim) {
+    if (nonVol.fadeDim && (last_state != STATE_SLOT_MACHINE)) {
       spistart = micros();
       for (int i=0; i < FADELEVELS * FADEMULT; i++){
         for(int k=0; k < FADELEVELS; k++){
@@ -739,7 +732,7 @@ void do_display_time() {
       spidelta = (int)(spiend - spistart);
     } 
     
-    if (nonVol.fadeDigits) {
+    if (nonVol.fadeDigits &(last_state != STATE_SLOT_MACHINE)) {
       for (int i=0; i < FADELEVELS * FADEMULT; i++){
         for(int k=0; k < FADELEVELS; k++){
           if (k * FADEMULT < i){
@@ -763,6 +756,7 @@ void do_display_time() {
 }
 
 void do_slot_machine() {
+  int map[6] = {4,5,2,3,0,1};
   colons = 0;
   // synch to system/cloud time each minute when the slot machine starts
   if (Time.isValid() &&  rtcAvailable && (slot_minor_counter == 0) && (slot_major_counter == 0) ) {
@@ -771,8 +765,12 @@ void do_slot_machine() {
     Serial.printlnf("Doing rtc.adjust");    
     rtcValid = true;
   }
-  memset(timebuf, '0' + (char)slot_minor_counter, 6);
-  packbuf(timebuf);
+  for (int i=0; (i <= (int)slot_major_counter) && (i < 6); i++) {
+    slotbuf[map[i]] = '0' + (char)slot_minor_counter;
+    packbuf(slotbuf);  
+  }
+  //memset(timebuf, '0' + (char)slot_minor_counter, 6);
+  
   SPI.transfer(spibuf, NULL, 4, spi_send_finish);
 
   ++slot_minor_counter;
@@ -782,11 +780,11 @@ void do_slot_machine() {
     Serial.printlnf("Slot %d", slot_major_counter);
   }
   
-  if (3 < slot_major_counter && (rtcValid || Time.isValid())) {    
+  if (7 < slot_major_counter && (rtcValid || Time.isValid())) {    
     lastTime = -1;
     the_state = STATE_DISPLAY_TIME;
   } else {
-    delay(80);
+    delay(40 + slot_major_counter * 10);
   }
 }
 
@@ -905,6 +903,9 @@ void loop() {
     case STATE_HIGH_TIDE:    do_display_high_tide();  break;
     case STATE_LOW_TIDE:     do_display_low_tide();   break;    
   }
+
+  last_state = the_state;
+
   checkEnc();
 
   if (the_state == STATE_DISPLAY_TIME) {
