@@ -30,14 +30,28 @@ char tempbuf[7];
 char Htidebuf[7];
 char Ltidebuf[7];
 char slotbuf[] = "000000";
+char risebuf[7];
+char sunsetbuf[7];
 char spibuf[4];
 int lastTime;
 String tideDay = "0000-00-00";
+String sunDay = "0000-00-00";
+String sunRise = "";
+String sunSet  = "";
+int sunriseHr = 0;
+int sunriseMin = 0;
+int sunriseSec = 0;
+int sunsetHr = 0;
+int sunsetMin = 0;
+int sunsetSec = 0;
+
 
 #define ONE_DAY_MILLIS (24 * 60 * 60 * 1000)
 #define DS3231Addr 0x68
 #define PWMFREQ (200)
 #define EEPROMOFFSET (10)
+#define DISPDELAY (60)
+#define MINORCOUNT (40)
 
 unsigned long lastSync = millis();
 // RTC lib docs: https://adafruit.github.io/RTClib/html/index.html
@@ -62,8 +76,6 @@ int spidelta = 0;
 bool startup = true;
 int colons = 0xFF;
 
-#define NONVOLVERSION 1
-
 struct EE {
   uint8_t version;
   int offsetFromGMT;
@@ -72,6 +84,10 @@ struct EE {
   bool dateDisp;
   bool fadeDim;
   bool tideDisp;
+  bool sunDisp;
+  float lat;
+  float lng;
+  int tideStation;
 };
 
 EE nonVol;
@@ -82,7 +98,9 @@ struct tiderec {
   char type;
 };
 
-tiderec tidearr[4];
+#define MAXTIDEARR (8)
+
+tiderec tidearr[MAXTIDEARR];
 
 typedef enum {
   STATE_DISPLAY_TIME,
@@ -90,7 +108,9 @@ typedef enum {
   STATE_DISPLAY_DATE,
   STATE_DISPLAY_TEMP,
   STATE_HIGH_TIDE,
-  STATE_LOW_TIDE
+  STATE_LOW_TIDE,
+  STATE_SUNRISE,
+  STATE_SUNSET
 } my_state_t;
 
 my_state_t the_state;
@@ -115,11 +135,63 @@ BleCharacteristic txCharacteristic("tx", BleCharacteristicProperty::NOTIFY, txUu
 BleCharacteristic rxCharacteristic("rx", BleCharacteristicProperty::WRITE, rxUuid, serviceUuid, onDataReceived, NULL);
 //2
 
+void sunHandler(const char *event, const  char *data) {
+  Serial.printlnf("sunHandler >>%s<< >>%s<<", event, data);
+  JSONValue outerobj = JSONValue::parseCopy(data);
+  JSONObjectIterator iter(outerobj);
+  while (iter.next()) {
+    Serial.printlnf("key=%s value=%s", (const char *)iter.name(), (const char *)iter.value().toString());
+    if (iter.name() == "results") {
+      JSONObjectIterator ater(iter.value());
+      while(ater.next()) {
+        if (ater.name() == "date") {
+          sunDay = ater.value().toString().data();
+          Serial.printlnf("handler sunDay set to %s", sunDay.c_str());
+          Serial.printlnf("sunDay %s", sunDay.c_str());
+        } else if (ater.name() == "sunrise") {
+          sunRise = ater.value().toString().data();
+          int c1 = sunRise.indexOf(":");
+          int c2 = sunRise.indexOf(":", c1+1);
+          String shrs = sunRise.substring(0,c1);
+          String smin = sunRise.substring(c1+1, c2);
+          String ssec = sunRise.substring(c2+1, sunRise.length()-3);
+          sunriseHr = shrs.toInt();
+          if (sunRise.endsWith("PM")) {
+            sunriseHr += 12;
+          }
+          sunriseMin = smin.toInt();
+          sunriseSec = ssec.toInt();
+          Serial.printlnf("sunrise %s", sunRise.c_str());
+          Serial.printlnf("indexes %d %d", c1, c2);
+          Serial.printlnf("+%s+%s+%s+", shrs.c_str(), smin.c_str(), ssec.c_str());
+          Serial.printlnf("h %d m %d s %d", sunriseHr, sunriseMin, sunriseSec);
+        } else if (ater.name() == "sunset") {
+          sunSet = ater.value().toString().data();
+          int c1 = sunSet.indexOf(":");
+          int c2 = sunSet.indexOf(":", c1+1);
+          String shrs = sunSet.substring(0,c1);
+          String smin = sunSet.substring(c1+1, c2);
+          String ssec = sunSet.substring(c2+1, sunSet.length()-3);
+          sunsetHr = shrs.toInt();
+          if (sunSet.endsWith("PM")) {
+            sunsetHr += 12;
+          }
+          sunsetMin = smin.toInt();
+          sunsetSec = ssec.toInt();
+          Serial.printlnf("sunset %s", sunSet.c_str());
+          Serial.printlnf("indexes %d %d", c1, c2);
+          Serial.printlnf("+%s+%s+%s+", shrs.c_str(), smin.c_str(), ssec.c_str());
+          Serial.printlnf("h %d m %d s %d", sunsetHr, sunsetMin, sunsetSec);
+        }
+      }
+    }
+  }
+}
 
-void testHandler(const char *event, const char *data){
-  Serial.printlnf("testHandler >>%s<< >>%s<<", event, data);
+void hiloHandler(const char *event, const char *data){
+  Serial.printlnf("hiloHandler >>%s<< >>%s<<", event, data);
   
-  for (int i=0; i < 3; i++) {
+  for (int i=0; i < MAXTIDEARR; i++) {
     tidearr[i].imins = 0;
     tidearr[i].height = 0.0;
     tidearr[i].type = 'X';
@@ -150,7 +222,11 @@ void testHandler(const char *event, const char *data){
             int colpos = time.indexOf(':');
             String mins = time.substring(colpos+1);
             String hours = time.substring(0, colpos);
-            imins = mins.toInt() + 60 * hours.toInt();
+            String days = datetime.substring(8,10);
+            String months = datetime.substring(5,7);
+            String years = datetime.substring(0,4);
+            Serial.printlnf("days %s months %s years %s", days.c_str(), months.c_str(), years.c_str());
+            imins = mins.toInt() + 60 * hours.toInt() + 86400 * days.toInt() + 2678400 * months.toInt() + 32140800 * (years.toInt() - 2000);
             //Serial.printlnf("time: %s h: %s m: %s imins: %d", time.c_str(), hours.c_str(), mins.c_str(), imins);
           } else if (eter.name() == "v") {
             v = eter.value().toDouble();
@@ -159,9 +235,11 @@ void testHandler(const char *event, const char *data){
             typc = typ.charAt(0);
           }
         }
-        tidearr[ii].imins = imins;
-        tidearr[ii].height = v;
-        tidearr[ii].type = typc;
+        if (ii < MAXTIDEARR) {
+          tidearr[ii].imins = imins;
+          tidearr[ii].height = v;
+          tidearr[ii].type = typc;
+        }
         Serial.printlnf("%d imins %d height %.2f type %d", ii, tidearr[ii].imins, tidearr[ii].height, tidearr[ii].type);
       } 
     }  
@@ -247,24 +325,31 @@ void setup() {
   }
 
   EEPROM.get(EEPROMOFFSET, nonVol);
-
-  Serial.printlnf("EEPROM Version %d GMT Offset %d", nonVol.version, nonVol.offsetFromGMT);
+  #define NONVOLVERSION 2
   
-  if (nonVol.version == 255) { //uninitialized EEPROM returns 255 for each byte
-    nonVol.version = 1;
+  Serial.printlnf("EEPROM Version %d Current Version %d GMT Offset %d", nonVol.version, NONVOLVERSION, nonVol.offsetFromGMT);
+
+  if ( (nonVol.version == 255) || (nonVol.version != NONVOLVERSION) ) { //uninitialized EEPROM returns 255 for each byte
+    nonVol.version = NONVOLVERSION;
     nonVol.offsetFromGMT = -5;
     nonVol.fadeDigits = true;
     nonVol.fadeDim = false;
     nonVol.countback = false;
     nonVol.dateDisp = false;
     nonVol.tideDisp = false;
-    Serial.printlnf("setting EEPROM first time, offsetFromGMT %d", nonVol.offsetFromGMT);
+    nonVol.sunDisp = false;
+    nonVol.lat = 41.2587; // Katonah NY
+    nonVol.lng = -73.6854;
+    nonVol.tideStation = 8415490; //Rockland ME
+
+    Serial.printlnf("setting EEPROM first time or version change, offsetFromGMT %d", nonVol.offsetFromGMT);
     EEPROM.put(EEPROMOFFSET, nonVol);    
   } 
   //Still need this even with RTC since particle OS won't give Time.isValid() until TZ set
   Time.zone(nonVol.offsetFromGMT);
 
-  Particle.subscribe("hook-response/hilo", testHandler, MY_DEVICES);
+  Particle.subscribe("hook-response/hilo", hiloHandler, MY_DEVICES);
+  Particle.subscribe("hook-response/sunrisesunset", sunHandler, MY_DEVICES);
 }
 
 void onLinefeed(String msg)
@@ -398,7 +483,29 @@ void execKwd(String k, String v)
       nonVol.tideDisp = false;
       sendBLE("tide disp off");
     }
-
+  } else if (k == "sun") {
+    if (v == "on") {
+      sendBLE("sunrise/set disp on");
+      nonVol.sunDisp = true;
+    } else {
+      sendBLE("sunrise/set disp off");
+      nonVol.sunDisp = false;
+    }
+  } else if (k == "lat") {
+    nonVol.lat = v.toFloat();
+    sunDay = "0000-00-00";
+    Serial.printlnf("lat set: %f", nonVol.lat);
+    sendBLE("lat set");
+  } else if (k == "lng") {
+    nonVol.lng = v.toFloat();
+    sunDay = "0000-00-00";
+    Serial.printlnf("lng set: %f", nonVol.lng);
+    sendBLE("lng set");
+  } else if (k == "tidestation") {
+    nonVol.tideStation = v.toInt();
+    tideDay = "0000-00-00";
+    sendBLE("tide station set");
+    Serial.printlnf("sta set %d", nonVol.tideStation);
   } else if (k == "gmtOffset") {
     int temp;
     temp =  v.toInt();
@@ -480,7 +587,8 @@ void execKwd(String k, String v)
     nonVol.fadeDigits = saveFade;
     nonVol.fadeDim = saveDim;
   } else {
-    sendBLE("Commands are: fade:digits|dimming|off, countback:on|off, date:on|off, tide:on|off, gmtOffset:hh, clearEE, ssid:ss, pwd:pp, updateWiFi");
+    sendBLE("Commands are: fade:digits|dimming|off, countback:on|off, date:on|off, tide:on|off, sun:on|off");
+    sendBLE("gmtOffset:hh, lat:ll, lng:lg, tidestation: t, clearEE, ssid:ss, pwd:pp, updateWiFi");
   }
   //save into EEPROM
   EEPROM.put(EEPROMOFFSET, nonVol);
@@ -554,6 +662,14 @@ int writeLtide() {
   }
 }
 
+int writesunrise() {
+  return snprintf(risebuf, 7, "%02d%02d%02d", sunriseSec, sunriseMin, sunriseHr);
+}
+
+int writesunset() {
+  return snprintf(sunsetbuf, 7, "%02d%02d%02d", sunsetSec, sunsetMin, sunsetHr);
+}
+
 int writetemp() {
   //return snprintf(tempbuf, 7, "%02d%02d%02d", temp, 0, hum);
   return snprintf(tempbuf, 7, "%02d%02d%02d", hum % 100, (spidelta / 10000) % 100, temp % 100);  
@@ -588,6 +704,8 @@ unsigned slot_major_counter = 0;
 unsigned date_minor_counter = 0;
 unsigned temp_minor_counter = 0;
 unsigned tide_minor_counter = 0;
+unsigned rise_minor_counter = 0;
+unsigned set_minor_counter  = 0;
 
 void enter_slot_machine() {
   
@@ -595,13 +713,26 @@ void enter_slot_machine() {
 
   if (Particle.connected()) { //if connected see if we have to get new tide data
     time_t tnow = Time.now();
+    time_t tomorrow = Time.now() + 86400;
     String i86time = Time.format(tnow, TIME_FORMAT_ISO8601_FULL);
+    String fmtToday = Time.format(tnow, "%Y%m%d");  
+    String fmtTomorrow = Time.format(tomorrow, "%Y%m%d");  
     String day = i86time.substring(0,10);
     Serial.printlnf("day, tideDay %s %s", day.c_str(), tideDay.c_str());
+    Serial.printlnf("day, sunDay %s %s", day.c_str(), sunDay.c_str());    
+    Serial.printlnf("today, tomorrow %s %s", fmtToday.c_str(), fmtTomorrow.c_str());
     if (tideDay != day) {
-      //String data = String(10);
-      Particle.publish("hilo", NO_ACK); //, data, PRIVATE);
-      Serial.printlnf("did Particle.publish") ;
+      String data = String::format("{\"NOAAStation\": %d, \"begin_date\": %s, \"end_date\": %s}", nonVol.tideStation, fmtToday.c_str(), fmtTomorrow.c_str());
+      Serial.printlnf("data %s", data.c_str());
+      Particle.publish("hilo", data);
+      Serial.printlnf("did Particle.publish hilo");
+    }
+    Serial.printlnf("$$$ day %s sunDay %s", day.c_str(), sunDay.c_str());
+    if (sunDay != day) {
+      String data = String::format("{\"Lat\": %f, \"Lng\": %f}", nonVol.lat, nonVol.lng);
+      Serial.printlnf("data %s", data.c_str());      
+      Particle.publish("sunrisesunset", data);
+      Serial.printlnf("did Particle.publish sunrisesunset");
     }
   }
 
@@ -629,6 +760,16 @@ void enter_ltide_display() {
   tide_minor_counter = 0;
 }
 
+void enter_sunrise_display() {
+  the_state = STATE_SUNRISE;
+  rise_minor_counter = 0;
+}
+
+void enter_sunset_display() {
+  the_state = STATE_SUNSET;
+  set_minor_counter = 0;
+}
+
 void do_display_time() {
   colons = 0xF;
   writetime(); 
@@ -637,12 +778,8 @@ void do_display_time() {
   {
     //temp = (9.0/5.0) * Si7021.readTemperature() + 32.0;
     //hum = Si7021.readHumidity();
-
-    if (nonVol.dateDisp) {
-      enter_date_display();
-    } else {
-      enter_slot_machine();
-    }
+    
+    enter_date_display();
     return; // don't display the :01 time
   }
   
@@ -784,11 +921,16 @@ void do_slot_machine() {
     lastTime = -1;
     the_state = STATE_DISPLAY_TIME;
   } else {
-    delay(40 + slot_major_counter * 10);
+    // delay(40 + slot_major_counter * 10);
+    delay(60);
   }
 }
 
 void do_display_date() {
+  if (!nonVol.dateDisp) {
+    enter_htide_display();
+    return;
+  }
   colons = 0;
   if (date_minor_counter == 0) {
     if (rtcValid) {
@@ -801,7 +943,7 @@ void do_display_date() {
   SPI.transfer(spibuf, NULL, 4, spi_send_finish);
 
   ++date_minor_counter;
-  if (date_minor_counter >= 40) {
+  if (date_minor_counter >= MINORCOUNT) {
     if (nonVol.tideDisp) {
       enter_htide_display();
     } else {
@@ -809,7 +951,7 @@ void do_display_date() {
     }
     //enter_temp_display();
   }
-  delay(80);
+  delay(DISPDELAY);
 }
 
 //only for debugging if a temp display module included
@@ -826,15 +968,22 @@ void do_display_temp() {
   SPI.transfer(spibuf, NULL, 4, spi_send_finish);
 
   ++temp_minor_counter;
-  if (temp_minor_counter >= 40) {
+  if (temp_minor_counter >= MINORCOUNT) {
     enter_slot_machine();
   }
-  delay(80);
+  delay(DISPDELAY);
 }
 
+void do_display_sunrise();
+
 void do_display_high_tide() {
+  if (!nonVol.tideDisp || (timebuf[3] % 2 == 0)) {
+    do_display_sunrise();
+    return;
+  }
   writeHtide();
   if (Htidebuf[0] == ':') { // skip if not another high tide
+    writedate(); //undo writeHtide 
     enter_ltide_display();
     return;
   }  
@@ -846,29 +995,87 @@ void do_display_high_tide() {
   SPI.transfer(spibuf, NULL, 4, spi_send_finish);
 
   ++tide_minor_counter;
-  if (tide_minor_counter >= 40) {
+  if (tide_minor_counter >= MINORCOUNT) {
     enter_ltide_display();
   }
-  delay(80);
+  delay(DISPDELAY);
 }
 
 void do_display_low_tide() {
+  if (!nonVol.tideDisp) {
+    enter_sunrise_display();
+    return;
+  }
   writeLtide();
   if (Ltidebuf[0] == ':') {
-    enter_slot_machine();
+    writedate(); // undo writeLtide
+    enter_sunrise_display();
     return;
   }
   colons = 0x04 + 0x01; //lower colonsif (tide_minor_counter == 0) {
+  if (tide_minor_counter == 0) {
     Serial.printlnf("Tide %s", Ltidebuf);
+  }
   
   packbuf(Ltidebuf);
   SPI.transfer(spibuf, NULL, 4, spi_send_finish);
 
   ++tide_minor_counter;
-  if (tide_minor_counter >= 40) {
-    enter_slot_machine();
+  if (tide_minor_counter >= MINORCOUNT) {
+    enter_sunrise_display();
   }
-  delay(80);
+  delay(DISPDELAY);
+}
+
+void do_display_sunrise() {
+  if (!nonVol.sunDisp || (timebuf[3] % 2 != 0)) {
+    enter_slot_machine();
+    return;
+  }
+  writesunrise();
+  //if (risebuf[0] == ':') {
+  //  enter_sunset_display();
+  //  return;
+  //}
+  colons = 0x01 + 0x08; //lower left, upper right
+  if (rise_minor_counter == 0) {
+    Serial.printlnf("Sunrise %s", risebuf);
+  }
+  
+  packbuf(risebuf);
+  SPI.transfer(spibuf, NULL, 4, spi_send_finish);
+
+  ++rise_minor_counter;
+  if (rise_minor_counter >= MINORCOUNT) {
+    enter_sunset_display();
+  } else {
+    delay(DISPDELAY);
+  }
+}
+
+void do_display_sunset() {
+  if (!nonVol.sunDisp) {
+    enter_slot_machine();
+    return;
+  }
+  writesunset();
+  //if (sunsetbuf[0] == ':') {
+  //  enter_slot_machine();
+  //  return;
+  //}
+  colons = 0x02 + 0x04; //upper left, lower right
+  if (set_minor_counter == 0) {
+    Serial.printlnf("Sunset %s", sunsetbuf);
+  }
+  packbuf(sunsetbuf);
+  SPI.transfer(spibuf, NULL, 4, spi_send_finish);
+
+  ++set_minor_counter;
+  if (set_minor_counter >= MINORCOUNT) {
+    enter_slot_machine();
+  } else {
+    delay(DISPDELAY);
+  }
 }
 
 void checkEnc() {
@@ -901,7 +1108,9 @@ void loop() {
     case STATE_SLOT_MACHINE: do_slot_machine();       break;
     case STATE_DISPLAY_TEMP: do_display_temp();       break;    
     case STATE_HIGH_TIDE:    do_display_high_tide();  break;
-    case STATE_LOW_TIDE:     do_display_low_tide();   break;    
+    case STATE_LOW_TIDE:     do_display_low_tide();   break;  
+    case STATE_SUNRISE:      do_display_sunrise();    break;
+    case STATE_SUNSET:       do_display_sunset();     break;  
   }
 
   last_state = the_state;
