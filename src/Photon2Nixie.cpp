@@ -199,6 +199,8 @@ void hiloHandler(const char *event, const char *data){
 
   JSONValue outerobj = JSONValue::parseCopy(data);
   JSONObjectIterator iter(outerobj);
+  String thisday;
+  String firstday;
   while (iter.next()) {
     //Serial.printlnf("key=%s value=%s", (const char *)iter.name(), (const char *)iter.value().toString());
     if (iter.value().isArray()) {
@@ -222,12 +224,8 @@ void hiloHandler(const char *event, const char *data){
             int colpos = time.indexOf(':');
             String mins = time.substring(colpos+1);
             String hours = time.substring(0, colpos);
-            String days = datetime.substring(8,10);
-            String months = datetime.substring(5,7);
-            String years = datetime.substring(0,4);
-            Serial.printlnf("days %s months %s years %s", days.c_str(), months.c_str(), years.c_str());
-            imins = mins.toInt() + 60 * hours.toInt() + 86400 * days.toInt() + 2678400 * months.toInt() + 32140800 * (years.toInt() - 2000);
-            //Serial.printlnf("time: %s h: %s m: %s imins: %d", time.c_str(), hours.c_str(), mins.c_str(), imins);
+            thisday = datetime.substring(8,10);
+            imins = mins.toInt() + 60 * hours.toInt();
           } else if (eter.name() == "v") {
             v = eter.value().toDouble();
           } else if (eter.name() == "type") {
@@ -235,8 +233,15 @@ void hiloHandler(const char *event, const char *data){
             typc = typ.charAt(0);
           }
         }
+        if (ii == 0) {
+          firstday = thisday;
+        }
         if (ii < MAXTIDEARR) {
-          tidearr[ii].imins = imins;
+          if (thisday == firstday) {
+            tidearr[ii].imins = imins;
+          } else {
+            tidearr[ii].imins = imins + 1440; // 1440 = 24 * 60 mins in a day
+          }
           tidearr[ii].height = v;
           tidearr[ii].type = typc;
         }
@@ -620,17 +625,25 @@ int writedate() {
 
 int writeHtide() {
   if (Particle.connected()) {
-    int nmins = Time.hour() * 60 + Time.minute();
+    int nmins = Time.minute() + 60 * Time.hour();
     int isave = -1;
-    for(int ii = 0; ii < 4; ii++) {
-      if ((tidearr[ii].imins > nmins) && tidearr[ii].type == 'H') {
+    //today and tomorrow tides are in tidearr[] already sorted in time order in the array
+    //and stored in minutes from the beginning of today .. so tomorrow is 1440 mins
+    //later. search first for a next tide that's today. if not found, next one will be
+    //the first one tomorrow since it's 1440 mins later
+    for(int ii = 0; ii < MAXTIDEARR; ii++) {
+      if ( (tidearr[ii].imins > nmins) && (tidearr[ii].type == 'H') ) {
         isave = ii;
         break;
       }
     }
     if (isave >= 0) {
-      int hours = tidearr[isave].imins / 60;
-      int mins = tidearr[isave].imins - 60 * hours;
+      int m = tidearr[isave].imins;
+      if (m > 1440) {
+        m = m - 1440;
+      }
+      int hours = m / 60;
+      int mins = m - 60 * hours;
       return snprintf(Htidebuf, 7, "%02d%02d%02d", 0, mins, hours);  
     } else {
       return snprintf(Htidebuf, 7, "::::::");
@@ -642,24 +655,28 @@ int writeHtide() {
 
 int writeLtide() {
   if (Particle.connected()) {
-    int nmins = Time.hour() * 60 + Time.minute();
+    int nmins = Time.minute() + 60 * Time.hour();
     int isave = -1;
-    for(int ii = 0; ii < 4; ii++) {
-      if ((tidearr[ii].imins > nmins) && tidearr[ii].type == 'L') {
+    for(int ii = 0; ii < MAXTIDEARR; ii++) {
+      if ( (tidearr[ii].imins > nmins) && (tidearr[ii].type == 'L') ) {
         isave = ii;
         break;
       }
     }
     if (isave >= 0) {
-      int hours = tidearr[isave].imins / 60;
-      int mins = tidearr[isave].imins - 60 * hours;
+      int m = tidearr[isave].imins;
+      if (m > 1440) {
+        m = m - 1440;
+      }
+      int hours = m / 60;
+      int mins = m - 60 * hours;
       return snprintf(Ltidebuf, 7, "%02d%02d%02d", 0, mins, hours);  
     } else {
       return snprintf(Ltidebuf, 7, "::::::");
     }
   } else {
     return snprintf(Ltidebuf, 7, "::::::");
-  }
+  }  
 }
 
 int writesunrise() {
@@ -713,7 +730,7 @@ void enter_slot_machine() {
 
   if (Particle.connected()) { //if connected see if we have to get new tide data
     time_t tnow = Time.now();
-    time_t tomorrow = Time.now() + 86400;
+    time_t tomorrow = Time.now() + 86400; //24*60*60 seconds in a day
     String i86time = Time.format(tnow, TIME_FORMAT_ISO8601_FULL);
     String fmtToday = Time.format(tnow, "%Y%m%d");  
     String fmtTomorrow = Time.format(tomorrow, "%Y%m%d");  
@@ -729,7 +746,7 @@ void enter_slot_machine() {
     }
     Serial.printlnf("$$$ day %s sunDay %s", day.c_str(), sunDay.c_str());
     if (sunDay != day) {
-      String data = String::format("{\"Lat\": %f, \"Lng\": %f}", nonVol.lat, nonVol.lng);
+      String data = String::format("{\"Lat\": %f, \"Lng\": %f, \"date\": \"%s\"}", nonVol.lat, nonVol.lng, day.c_str());
       Serial.printlnf("data %s", data.c_str());      
       Particle.publish("sunrisesunset", data);
       Serial.printlnf("did Particle.publish sunrisesunset");

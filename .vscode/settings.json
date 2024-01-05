@@ -7,5 +7,5 @@
     "particle.firmwareVersion": "5.6.0",
     "particle.targetPlatform": "p2",
     "C_Cpp.errorSquiggles": "Enabled",
-    "particle.targetDevice": "Dalibor"
+    "particle.targetDevice": "Farny2"
 }
